@@ -1,230 +1,290 @@
-import {createEffect, createSignal} from "solid-js";
-import {useRain} from "../../contexts/raincontext";
-import Captcha from "../Captcha/captcha";
+import {createResource, createSignal, For, Show} from "solid-js";
 import {authedAPI, createNotification} from "../../util/api";
-import Countup from "../Countup/countup";
+import Loader from "../Loader/loader";
+import AdminMFA from "../MFA/adminmfa";
 import Avatar from "../Level/avatar";
+import {useSearchParams} from "@solidjs/router";
 
-function SidebarRain(props) {
+function AdminRain(props) {
 
-    const [rain, userRain, time, userTimer, joinedRain] = useRain()
-    const [token, setToken] = createSignal(null)
-    const [showCaptcha, setShowCaptcha] = createSignal(false)
+    const [username, setUsername] = createSignal('')
+    const [amount, setAmount] = createSignal('')
+    const [users, setUsers] = createSignal([])
 
-    async function joinRain() {
-        let res = await authedAPI('/rain/join', 'POST', JSON.stringify({
-            'captchaResponse': token()
-        }), true)
+    const [params, setParams] = useSearchParams()
+    const [phrasesResource, {mutate: mutatePhrases, refetch: refetchPhrases }] = createResource(() => params?.search || '', fetchUsers)
 
-        if (res.success) {
-            setToken(null)
-            joinedRain()
-            createNotification('success', `Successfully joined the rain.`)
+    async function fetchUsers(search) {
+        try {
+            setUsername(search)
+            let phrasesRes = await authedAPI(`/admin/rain${search ? `?search=${search}` : ''}`, 'GET', null)
+            if (phrasesRes.error && phrasesRes.error === '2FA_REQUIRED') {
+                return mutatePhrases({mfa: true})
+            }
+
+            setUsers(phrasesRes?.data)
+            return mutatePhrases(phrasesRes)
+        } catch (e) {
+            console.log(e)
+            return mutatePhrases(null)
         }
-
-        if (res.error === 'NOT_LINKED') {
-            let discordRes = await authedAPI('/discord/link', 'POST', null, true)
-            if (discordRes.url) {
-                attemptToLinkDiscord(discordRes.url)
-            }
-        }
-
-        setShowCaptcha(false)
-    }
-
-    function attemptToLinkDiscord(url) {
-        let popupWindow = window.open(url, 'popUpWindow', 'height=700,width=500,left=100,top=100,resizable=yes,scrollbar=yes')
-        window.addEventListener("message", function (event) {
-            if (event.data === "Authorized") {
-                popupWindow.close();
-                joinRain()
-            }
-        }, false)
-    }
-
-    function handleRainJoin() {
-        if (userRain()?.joined || rain()?.joined) return createNotification('error', 'You have already joined this rain.')
-
-        setShowCaptcha(true)
-        hcaptcha.render('captcha-div', {
-            sitekey: '5029f0f4-b80b-42a8-8c0e-3eba4e9edc4c',
-            theme: 'dark',
-            callback: function (token) {
-                setToken(token)
-                joinRain()
-            }
-        });
-    }
-
-    function formatTimeLeft(ms) {
-        const totalSeconds = Math.floor(ms / 1000)
-        const minutes = Math.floor((totalSeconds % 3600) / 60)
-        const seconds = totalSeconds % 60
-
-        return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
     }
 
     return (
         <>
-            <Captcha active={showCaptcha()} close={() => setShowCaptcha(false)}/>
+            {phrasesResource()?.mfa && (
+                <AdminMFA refetch={() => {
+                    refetchPhrases()
+                }}/>
+            )}
 
-            <div className='rain-container fadein'>
-                {userRain() ? (
-                    <Avatar id={userRain()?.host?.id} xp={userRain()?.host?.xp} height='30'/>
-                ) : (
-                    <img src='/assets/icons/logoswords.png' height='41' alt=''/>
-                )}
-                <p>{userRain()?.host?.username || 'BLOXCLASH'} <span className='gold'>HOSTED A RAIN</span></p>
-                <div className='amount-backing'>
-                    <img className='coin' src='/assets/icons/fancycoin.png' alt='' height='60'/>
+            <div className='content'>
+                <div class='phrases-wrapper'>
+                    <div className='table-header'>
+                        <div className='table-column'>
+                            <p>USERNAME</p>
+                        </div>
 
-                    <div class='timer'>
-                        <img src='/assets/icons/timer.svg' height='20'/>
-                        <p>{formatTimeLeft(userRain() ? userTimer() : time())}</p>
+                        <div className='table-column'>
+                            <p>AMOUNT</p>
+                        </div>
                     </div>
 
-                    <div className='amount-container'>
-                        <img src='/assets/icons/fancycoin.png' alt='' height='20'/>
-                        <p><Countup end={userRain()?.amount || rain()?.amount || 0} gray={true}/></p>
-                    </div>
+                    <Show when={!phrasesResource.loading} fallback={<Loader/>}>
+                        <div class='table'>
+                            <For each={users()}>{(tipper, index) =>
+                                <div className='table-data'>
+                                    <div className='table-column'>
+                                        <Avatar id={tipper?.id} xp={tipper.xp} height='30'/>
+                                        <p class='white'>{tipper?.username || 'Anonymous'}</p>
+                                    </div>
+
+                                    <div className='table-column'>
+                                        <img src='/assets/icons/coin.svg' height='15' width='16' alt=''/>
+                                        <p className='white'>{(tipper?.amount || 0)?.toLocaleString(undefined, {
+                                            minimumFractionDigits: 2,
+                                            maximumFractionDigits: 2
+                                        })}</p>
+                                    </div>
+                                </div>
+                            }</For>
+                        </div>
+                    </Show>
                 </div>
-                <button className='bevel-gold claim' onClick={() => handleRainJoin()} disabled={userRain()?.joined || rain()?.joined}>
-                    {(userRain()?.joined || rain()?.joined) ? 'YOU ARE IN THE RAIN' : 'CLAIM RAIN'}
-                </button>
+
+                <div class='filters'>
+                    <div class='input-wrapper'>
+                        <input placeholder='SEARCH FOR USER' value={username()} onInput={(e) => setUsername(e.target.value)}/>
+                        <button class='search-button' onClick={() => setParams({ search: username() })}>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 19 19" fill="none">
+                                <path d="M16.2987 17.8313L16.2988 17.8314C16.5039 18.0371 16.7798 18.15 17.0732 18.15C17.3511 18.15 17.6162 18.0476 17.818 17.8601C18.2484 17.4602 18.2624 16.7948 17.8478 16.3785L17.7415 16.4843L17.8478 16.3785L13.7547 12.2684C14.7979 11.0227 15.3686 9.47437 15.3686 7.86374C15.3686 3.99137 12.1072 0.85 8.10932 0.85C4.11147 0.85 0.85 3.99137 0.85 7.86374C0.85 11.7361 4.11147 14.8775 8.10932 14.8775C9.56844 14.8775 10.9619 14.4644 12.163 13.6786L16.2987 17.8313ZM8.10932 2.94054C10.929 2.94054 13.214 5.15409 13.214 7.86374C13.214 10.5734 10.929 12.7869 8.10932 12.7869C5.28964 12.7869 3.00461 10.5734 3.00461 7.86374C3.00461 5.15409 5.28964 2.94054 8.10932 2.94054Z" fill="#837EC1" stroke="#837EC1" stroke-width="0.3"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div className='input-wrapper dark'>
+                        <input placeholder='ENTER AMOUNT...' type='number' value={amount()}
+                               onInput={(e) => setAmount(e.target.valueAsNumber)}/>
+                    </div>
+
+                    <button class='bevel-light add' onClick={async () => {
+                        let res = await authedAPI('/admin/rain/add', 'POST', JSON.stringify({
+                            amount: amount()
+                        }), true)
+
+                        if (res?.success) {
+                            createNotification('success', `Successfully added ${amount()} to the rain.`)
+                            setAmount(0)
+                        }
+                    }}>ADD TO RAIN</button>
+
+                    <button className='bevel-light remove' onClick={async () => {
+                        let res = await authedAPI('/admin/rain/substract', 'POST', JSON.stringify({
+                            amount: amount()
+                        }), true)
+
+                        if (res?.success) {
+                            createNotification('success', `Successfully removed ${amount()} from the rain.`)
+                            setAmount(0)
+                        }
+                    }}>SUBTRACT FROM RAIN
+                    </button>
+                </div>
             </div>
 
             <style jsx>{`
-              .rain-container {
-                width: 100%;
-                min-height: 100%;
-                
-                top: 0;
-                left: 0;
-
-                position: absolute;
+              .table {
                 display: flex;
                 flex-direction: column;
-                z-index: 1;
-                
+              }
+
+              .table-header, .table-data {
+                display: flex;
+                justify-content: space-between;
+              }
+
+              .table-header {
+                margin: 0 0 20px 0;
+              }
+
+              .table-data {
+                height: 55px;
+                background: rgba(90, 84, 153, 0.35);
+                padding: 0 20px;
+
+                display: flex;
                 align-items: center;
-                justify-content: center;
-                gap: 10px;
-                
-                padding: 12px 20px;
 
-                background: linear-gradient(277.39deg,rgba(19,17,41,1) -69.8%,rgba(37,31,78,1) 144.89%);
+                color: #ADA3EF;
+                font-size: 14px;
+                font-weight: 700;
+              }
 
-                color: #FFF;
-                font-family: Geogrotesque Wide, sans-serif;
+              .table-data:nth-of-type(2n) {
+                background: rgba(90, 84, 153, 0.15);
+              }
+
+              .table-column {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex: 1 1 0;
+              }
+
+              .table-column:nth-of-type(2n) {
+                justify-content: flex-end;
+              }
+
+              .table-header p {
+                background: rgba(90, 84, 153, 0.35);
+                height: 25px;
+                line-height: 25px;
+                padding: 0 15px;
+                border-radius: 2px;
+
+                color: #ADA3EF;
                 font-size: 12px;
                 font-weight: 700;
               }
-              
-              .amount-backing {
-                width: 100%;
-                height: 45px;
 
-                background: linear-gradient(270deg, rgba(90, 84, 153, 0) 0%, rgba(249, 172, 57, 0.31) 98.73%, rgba(90, 84, 153, 0) 100%);
-                border-radius: 0 0 8px 8px;
+              .view {
+                background: unset;
+                outline: unset;
+                border: unset;
 
                 display: flex;
                 align-items: center;
-                justify-content: flex-end;
-                gap: 16px;
+                gap: 6px;
 
-                padding: 0 5px;
-              }
-
-              .amount-container {
-                width: 100%;
-                max-width: 130px;
-                height: 30px;
-
-                background: conic-gradient(from 180deg at 50% 50%, #FFDC18 -0.3deg, #B17818 72.1deg, rgba(156, 99, 15, 0.611382) 139.9deg, rgba(126, 80, 12, 0.492874) 180.52deg, rgba(102, 65, 10, 0.61) 215.31deg, #B17818 288.37deg, #FFDC18 359.62deg, #FFDC18 359.7deg, #B17818 432.1deg);
-                border-radius: 5px;
-
-                position: relative;
-
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                gap: 8px;
-
-                font-family: 'Geogrotesque Wide';
-                font-weight: 700;
-                color: white;
-                font-size: 13px;
-              }
-
-              .amount-container > * {
-                position: relative;
-                z-index: 1;
-              }
-
-              .amount-container:before {
-                width: calc(100% - 2px);
-                height: calc(100% - 2px);
-
-                top: 1px;
-                left: 1px;
-                position: absolute;
-                z-index: 1;
-                content: '';
-
-                background: #534141;
-                border-radius: 5px;
-              }
-
-              .coin {
-                position: absolute !important;
-                left: -15px;
-                z-index: 1;
-              }
-              
-              .rain-container > * {
-                position: relative;
-                z-index: 1;
-              }
-              
-              .timer {
-                display: flex;
-                align-items: center;
-                gap: 4px;
-                
-                font-variant-numeric: tabular-nums;
-              }
-              
-              .claim {
-                width: 100%;
-                height: 25px;
-
+                color: #ADA3EF;
                 font-family: Geogrotesque Wide, sans-serif;
-                font-size: 11px;
+                font-size: 14px;
+                font-weight: 700;
+
+                cursor: pointer;
+              }
+
+              .content {
+                display: flex;
+                gap: 35px;
+              }
+              
+              .filters {
+                width: 100%;
+                max-width: 290px;
+                
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+              }
+              
+              .input-wrapper {
+                width: 100%;
+                height: 50px;
+                
+                display: flex;
+
+                border-radius: 5px;
+                background: rgba(0, 0, 0, 0.15);
+              }
+              
+              .input-wrapper.dark {
+                border: 1px solid #443F7D;
+                background: rgba(0, 0, 0, 0.25);
+              }
+              
+              .input-wrapper input {
+                width: 100%;
+                height: 100%;
+                
+                background: unset;
+                border: unset;
+                outline: unset;
+
+                color: white;
+                font-family: Geogrotesque Wide, sans-serif;
+                font-size: 15px;
+                font-weight: 700;
+                
+                padding: 0 15px;
+              }
+              
+              .input-wrapper input::placeholder {
+                color: #837EC1;
+                font-family: Geogrotesque Wide, sans-serif;
+                font-size: 15px;
                 font-weight: 700;
               }
               
-              .claim:disabled {
-                box-shadow: unset;
-                background: linear-gradient(0deg, rgba(255, 190, 24, 0.25) 0%, rgba(255, 190, 24, 0.25) 100%), linear-gradient(230deg, #1A0E33 0%, #423C7A 100%);
-                border: 1px solid #FCA31E;
-                color: #FCA31E;
+              .search-button {
+                height: 100%;
+                min-width: 50px;
+                
+                outline: unset;
+                border: unset;
+                
+                background: rgba(0, 0, 0, 0.12);
+                cursor: pointer;
               }
               
-              .fadein {
-                animation: fadein 1s forwards ease;
+              .phrases-wrapper {
+                width: 100%;
               }
               
-              @keyframes fadein {
-                from {
-                  opacity: 0%;
-                }
-                to {
-                  opacity: 100%;
-                }
+              .remove {
+                outline: unset;
+                border: unset;
+                
+                border-radius: 3px;
+                background: #E2564D;
+                box-shadow: 0px 1px 0px 0px #A1443E, 0px -1px 0px 0px #FF8D86;
+
+                color: #FFF;
+                font-family: Geogrotesque Wide, sans-serif;
+                font-size: 14px;
+                font-weight: 600;
+
+                width: 100%;
+                height: 40px;
+                
+                cursor: pointer;
+              }
+              
+              .add {
+                height: 40px;
+
+                border-radius: 3px;
+                background: #59E878;
+                box-shadow: 0px 1px 0px 0px #339548, 0px -1px 0px 0px #88FFA2;
+
+                color: #FFF;
+                font-family: Geogrotesque Wide, sans-serif;
+                font-size: 14px;
+                font-weight: 600;
               }
             `}</style>
         </>
     );
 }
 
-export default SidebarRain;
+export default AdminRain;

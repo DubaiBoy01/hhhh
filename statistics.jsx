@@ -4,11 +4,11 @@ import Loader from "../Loader/loader";
 import AdminMFA from "../MFA/adminmfa";
 import Avatar from "../Level/avatar";
 import {useSearchParams} from "@solidjs/router";
-import UserModal from "./usermodal";
-import Pagination from "../Pagination/pagination";
+import UserAffiliateModal from "./affiliatemodal";
 import {addPage} from "../../util/pagination";
+import Pagination from "../Pagination/pagination";
 
-function AdminUsers(props) {
+function AdminStatistics(props) {
 
     let loadedPages = new Set()
     const [total, setTotal] = createSignal(1)
@@ -26,15 +26,15 @@ function AdminUsers(props) {
         try {
             setUsername(search)
             setPage(+params?.page || 1)
-            let users = await authedAPI(`/admin/users?page=${page()}${search ? `&search=${search}` : ''}`, 'GET', null)
-            if (users.error && users.error === '2FA_REQUIRED') {
+            let usersRes = await authedAPI(`/admin/users/affiliates?page=${page()}${params?.search ? `&search=${params?.search}` : ''}`, 'GET', null)
+            if (usersRes.error && usersRes.error === '2FA_REQUIRED') {
                 return mutateUsers({mfa: true})
             }
 
-            setTotal(users?.pages)
-            addPage(users?.data, page(), setUsers)
+            setTotal(usersRes.pages)
             setIsLoading(false)
-            return mutateUsers(users)
+            addPage(usersRes?.data, page(), setUsers)
+            return mutateUsers(usersRes)
         } catch (e) {
             console.log(e)
             return mutateUsers(null)
@@ -46,10 +46,10 @@ function AdminUsers(props) {
         setIsLoading(true)
         setParams({ page: page() })
 
-        let moreData = await authedAPI(`/admin/users?page=${page()}${params?.search ? `&search=${params?.search}` : ''}`, 'GET', null)
+        let moreData = await authedAPI(`/admin/users/affiliates?page=${page()}${params?.search ? `&search=${params?.search}` : ''}`, 'GET', null)
         if (!moreData) return setIsLoading(false)
 
-        addPage(moreData?.data, page(), setUsers)
+        addPage(moreData.data, page(), setUsers)
         setTotal(moreData.pages)
         loadedPages.add(page())
 
@@ -61,7 +61,7 @@ function AdminUsers(props) {
             if (!id) {
                 return mutateUser(null)
             }
-            let user = await authedAPI(`/admin/users/${id}`, 'GET', null)
+            let user = await authedAPI(`/admin/users/affiliates/${id}`, 'GET', null)
             return mutateUser(user)
         } catch (e) {
             console.log(e)
@@ -77,10 +77,10 @@ function AdminUsers(props) {
     return (
         <>
             {params.id && (
-                <UserModal user={user()} loading={user.loading} close={closeUserModal}/>
+                <UserAffiliateModal user={user()} loading={user.loading} close={closeUserModal}/>
             )}
 
-            {usersResource()?.mfa && (
+            {users()?.mfa && (
                 <AdminMFA refetch={() => {
                     refetchUsers()
                     refetchUser()
@@ -95,11 +95,15 @@ function AdminUsers(props) {
                         </div>
 
                         <div className='table-column'>
-                            <p>RBX ID</p>
+                            <p>CODE</p>
                         </div>
 
                         <div className='table-column'>
-                            <p>BALANCE</p>
+                            <p>WAGERED</p>
+                        </div>
+
+                        <div className='table-column'>
+                            <p>USERS</p>
                         </div>
 
                         <div className='table-column'>
@@ -108,7 +112,7 @@ function AdminUsers(props) {
                     </div>
 
                     <Show when={!usersResource.loading} fallback={<Loader/>}>
-                        <div class='users'>
+                        <div class='table'>
                             <For each={users()[page()]}>{(user, index) =>
                                 <div className='table-data'>
                                     <div className='table-column'>
@@ -117,12 +121,19 @@ function AdminUsers(props) {
                                     </div>
 
                                     <div className='table-column'>
-                                        <p class='gold'>{user?.id}</p>
+                                        <p>{user?.affiliateCode}</p>
                                     </div>
 
                                     <div className='table-column'>
                                         <img src='/assets/icons/coin.svg' height='15' width='16' alt=''/>
-                                        <p class='white'>{(user?.balance || 0)?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                                        <p class='white'>{(user?.affiliatedUsersWageredCount || 0)?.toLocaleString(undefined, {
+                                            minimumFractionDigits: 2,
+                                            maximumFractionDigits: 2
+                                        })}</p>
+                                    </div>
+
+                                    <div className='table-column'>
+                                        <p className='gold'>{user?.affiliatedUsersCount}</p>
                                     </div>
 
                                     <div className='table-column'>
@@ -139,17 +150,21 @@ function AdminUsers(props) {
                                 </div>
                             }</For>
                         </div>
-                    </Show>
 
-                    <Pagination isLoading={isLoading()} loadedPages={loadedPages} loadPage={loadPage} page={page()} total={total()} setPage={setPage} setParams={setParams}/>
+                        <Pagination isLoading={isLoading()} loadedPages={loadedPages} loadPage={loadPage} page={page()} total={total()} setPage={setPage} setParams={setParams}/>
+                    </Show>
                 </div>
 
                 <div class='filters'>
                     <div class='search-wrapper'>
-                        <input class='search' placeholder='SEARCH FOR USERS' value={username()} onInput={(e) => setUsername(e.target.value)}/>
-                        <button class='search-button' onClick={() => setParams({ search: username() })}>
-                            <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 19 19" fill="none">
-                                <path d="M16.2987 17.8313L16.2988 17.8314C16.5039 18.0371 16.7798 18.15 17.0732 18.15C17.3511 18.15 17.6162 18.0476 17.818 17.8601C18.2484 17.4602 18.2624 16.7948 17.8478 16.3785L17.7415 16.4843L17.8478 16.3785L13.7547 12.2684C14.7979 11.0227 15.3686 9.47437 15.3686 7.86374C15.3686 3.99137 12.1072 0.85 8.10932 0.85C4.11147 0.85 0.85 3.99137 0.85 7.86374C0.85 11.7361 4.11147 14.8775 8.10932 14.8775C9.56844 14.8775 10.9619 14.4644 12.163 13.6786L16.2987 17.8313ZM8.10932 2.94054C10.929 2.94054 13.214 5.15409 13.214 7.86374C13.214 10.5734 10.929 12.7869 8.10932 12.7869C5.28964 12.7869 3.00461 10.5734 3.00461 7.86374C3.00461 5.15409 5.28964 2.94054 8.10932 2.94054Z" fill="#837EC1" stroke="#837EC1" stroke-width="0.3"/>
+                        <input class='search' placeholder='SEARCH FOR USERS' value={username()}
+                               onInput={(e) => setUsername(e.target.value)}/>
+                        <button class='search-button' onClick={() => setParams({search: username()})}>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 19 19"
+                                 fill="none">
+                                <path
+                                    d="M16.2987 17.8313L16.2988 17.8314C16.5039 18.0371 16.7798 18.15 17.0732 18.15C17.3511 18.15 17.6162 18.0476 17.818 17.8601C18.2484 17.4602 18.2624 16.7948 17.8478 16.3785L17.7415 16.4843L17.8478 16.3785L13.7547 12.2684C14.7979 11.0227 15.3686 9.47437 15.3686 7.86374C15.3686 3.99137 12.1072 0.85 8.10932 0.85C4.11147 0.85 0.85 3.99137 0.85 7.86374C0.85 11.7361 4.11147 14.8775 8.10932 14.8775C9.56844 14.8775 10.9619 14.4644 12.163 13.6786L16.2987 17.8313ZM8.10932 2.94054C10.929 2.94054 13.214 5.15409 13.214 7.86374C13.214 10.5734 10.929 12.7869 8.10932 12.7869C5.28964 12.7869 3.00461 10.5734 3.00461 7.86374C3.00461 5.15409 5.28964 2.94054 8.10932 2.94054Z"
+                                    fill="#837EC1" stroke="#837EC1" stroke-width="0.3"/>
                             </svg>
                         </button>
                     </div>
@@ -157,7 +172,7 @@ function AdminUsers(props) {
             </div>
 
             <style jsx>{`
-              .users {
+              .table {
                 display: flex;
                 flex-direction: column;
                 margin-bottom: 20px;
@@ -196,7 +211,7 @@ function AdminUsers(props) {
                 flex: 1 1 0;
               }
 
-              .table-column:nth-of-type(4n) {
+              .table-column:nth-of-type(5n), .table-column:nth-of-type(4n) {
                 justify-content: flex-end;
               }
 
@@ -233,29 +248,29 @@ function AdminUsers(props) {
                 display: flex;
                 gap: 35px;
               }
-              
+
               .filters {
                 width: 100%;
                 max-width: 290px;
-                
+
                 display: flex;
                 flex-direction: column;
               }
-              
+
               .search-wrapper {
                 width: 100%;
                 height: 50px;
-                
+
                 display: flex;
 
                 border-radius: 5px;
                 background: rgba(0, 0, 0, 0.15);
               }
-              
+
               .search {
                 width: 100%;
                 height: 100%;
-                
+
                 background: unset;
                 border: unset;
                 outline: unset;
@@ -264,28 +279,28 @@ function AdminUsers(props) {
                 font-family: Geogrotesque Wide, sans-serif;
                 font-size: 15px;
                 font-weight: 700;
-                
+
                 padding: 0 15px;
               }
-              
+
               .search::placeholder {
                 color: #837EC1;
                 font-family: Geogrotesque Wide, sans-serif;
                 font-size: 15px;
                 font-weight: 700;
               }
-              
+
               .search-button {
                 height: 100%;
                 min-width: 50px;
-                
+
                 outline: unset;
                 border: unset;
-                
+
                 background: rgba(0, 0, 0, 0.12);
                 cursor: pointer;
               }
-              
+
               .users-wrapper {
                 width: 100%;
               }
@@ -294,4 +309,4 @@ function AdminUsers(props) {
     );
 }
 
-export default AdminUsers;
+export default AdminStatistics;
